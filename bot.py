@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date, datetime, timedelta, time
 from zoneinfo import ZoneInfo
 
@@ -13,6 +14,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -336,6 +338,91 @@ def finish_tariff_session(user_id):
 
 def get_tariff_session(user_id):
     return TARIFF_SESSIONS.get(user_id)
+
+
+# =========================================================
+# СОСТОЯНИЕ РАССЫЛКИ
+# =========================================================
+
+BROADCAST_SESSIONS = {}
+
+
+def start_broadcast_session(admin_id: int):
+    BROADCAST_SESSIONS[admin_id] = {
+        "text": None,
+    }
+
+
+def finish_broadcast_session(admin_id: int):
+    return BROADCAST_SESSIONS.pop(
+        admin_id,
+        None,
+    )
+
+
+def get_broadcast_session(admin_id: int):
+    return BROADCAST_SESSIONS.get(admin_id)
+
+
+def build_broadcast_confirmation_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "✅ Отправить всем",
+                callback_data="admin_broadcast_confirm",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "❌ Отмена",
+                callback_data="admin_broadcast_cancel",
+            )
+        ],
+    ])
+
+
+async def handle_broadcast_text(update, admin_id, text):
+    session = get_broadcast_session(admin_id)
+
+    if not session:
+        return False
+
+    if text == "❌ Отмена":
+        finish_broadcast_session(admin_id)
+        await update.message.reply_text(
+            "❌ Рассылка отменена.",
+            reply_markup=ADMIN_PANEL_MENU,
+        )
+        return True
+
+    message_text = text.strip()
+
+    if not message_text:
+        await update.message.reply_text(
+            "❌ Сообщение не может быть пустым."
+        )
+        return True
+
+    session["text"] = message_text
+
+    users = get_users()
+    recipients = [
+        user
+        for user in users
+        if user["user_id"] != ADMIN_ID
+        and not user["is_blocked"]
+    ]
+
+    await update.message.reply_text(
+        "📢 ПРЕДПРОСМОТР РАССЫЛКИ\n\n"
+        f"{message_text}\n\n"
+        "────────────────\n"
+        f"👥 Получателей: {len(recipients)}\n\n"
+        "Отправить сообщение всем?",
+        reply_markup=build_broadcast_confirmation_keyboard(),
+    )
+
+    return True
 
 
 def build_tariffs_keyboard():
@@ -2942,6 +3029,88 @@ async def handle_admin_callback(
 
     data = query.data or ""
 
+
+    # =====================================================
+    # РАССЫЛКА
+    # =====================================================
+
+    if data == "admin_broadcast_cancel":
+        finish_broadcast_session(admin_id)
+
+        await query.edit_message_text(
+            "❌ Рассылка отменена."
+        )
+
+        await query.message.reply_text(
+            "Админ-панель 👇",
+            reply_markup=ADMIN_PANEL_MENU,
+        )
+
+        return
+
+    if data == "admin_broadcast_confirm":
+        session = get_broadcast_session(admin_id)
+
+        if not session or not session.get("text"):
+            await query.answer(
+                "⚠️ Сообщение для рассылки не найдено.",
+                show_alert=True,
+            )
+            return
+
+        message_text = session["text"]
+        finish_broadcast_session(admin_id)
+
+        users = get_users()
+
+        sent = 0
+        failed = 0
+        skipped = 0
+
+        await query.edit_message_text(
+            "📢 РАССЫЛКА ЗАПУЩЕНА\n\n"
+            "Сообщение отправляется пользователям..."
+        )
+
+        for user in users:
+            target_user_id = user["user_id"]
+
+            if target_user_id == ADMIN_ID:
+                skipped += 1
+                continue
+
+            if user["is_blocked"]:
+                skipped += 1
+                continue
+
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text=message_text,
+                )
+                sent += 1
+
+                # Небольшая пауза, чтобы не упереться
+                # в лимиты Telegram при большой базе.
+                await asyncio.sleep(0.05)
+
+            except TelegramError as error:
+                failed += 1
+                print(
+                    f"⚠️ Не удалось отправить рассылку "
+                    f"user_id={target_user_id}: {error}"
+                )
+
+        await query.message.reply_text(
+            "✅ РАССЫЛКА ЗАВЕРШЕНА\n\n"
+            f"📨 Отправлено: {sent}\n"
+            f"❌ Не доставлено: {failed}\n"
+            f"⏭ Пропущено: {skipped}",
+            reply_markup=ADMIN_PANEL_MENU,
+        )
+
+        return
+
     # =====================================================
     # ТАРИФЫ
     # =====================================================
@@ -3484,6 +3653,20 @@ async def handle_message(
     save_user(update)
 
     # =====================================================
+    # АДМИНСКАЯ РАССЫЛКА
+    # =====================================================
+
+    if user_id == ADMIN_ID:
+        if get_broadcast_session(user_id):
+            handled = await handle_broadcast_text(
+                update,
+                user_id,
+                text,
+            )
+            if handled:
+                return
+
+    # =====================================================
     # АДМИНСКОЕ УПРАВЛЕНИЕ ТАРИФОМ
     # =====================================================
 
@@ -3914,6 +4097,28 @@ async def handle_message(
     # =====================================================
     # ТАРИФЫ
     # =====================================================
+
+    if text == "📢 Рассылка":
+        if user_id != ADMIN_ID:
+            await update.message.reply_text(
+                "⛔ Доступ запрещён.",
+                reply_markup=get_menu(user_id),
+            )
+            return
+
+        start_broadcast_session(user_id)
+
+        await update.message.reply_text(
+            "📢 РАССЫЛКА\n\n"
+            "Напиши текст, который нужно отправить всем пользователям.\n\n"
+            "После ввода я покажу предпросмотр и попрошу подтвердить отправку.\n\n"
+            "Для отмены: ❌ Отмена",
+            reply_markup=ReplyKeyboardMarkup(
+                [["❌ Отмена"]],
+                resize_keyboard=True,
+            ),
+        )
+        return
 
     if text == "⚙️ Тарифы":
 
