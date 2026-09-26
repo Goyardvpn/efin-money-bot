@@ -82,11 +82,50 @@ def init_db():
             )
         """)
 
+        # Системные настройки бота
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+
+        conn.execute("""
+            INSERT OR IGNORE INTO bot_settings (key, value)
+            VALUES ('maintenance_mode', '0')
+        """)
+
         conn.commit()
 
     # При первом запуске заполняем БД стандартными тарифами.
     # Существующие тарифы не перезаписываются.
     seed_default_tariffs()
+
+
+# =========================================================
+# РЕЖИМ ТЕХНИЧЕСКИХ РАБОТ
+# =========================================================
+
+def get_maintenance_mode():
+    with get_connection() as conn:
+        row = conn.execute("""
+            SELECT value
+            FROM bot_settings
+            WHERE key = 'maintenance_mode'
+        """).fetchone()
+
+        return row is not None and row["value"] == "1"
+
+
+def set_maintenance_mode(enabled):
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO bot_settings (key, value)
+            VALUES ('maintenance_mode', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """, ("1" if enabled else "0",))
+
+        conn.commit()
 
 
 # =========================================================
