@@ -1,16 +1,18 @@
 import bot
 import knowledge
-import knowledge_media_handler
 import knowledge_texts_ai
-import knowledge_guard
+import knowledge_bootstrap
 import ai_feature
 import ui_router
 
 
-knowledge.install(bot)
-knowledge_media_handler.install(bot)
+# Инициализация базы знаний и её прямое подключение к Application.
+# Старые monkey-patch модули knowledge_guard/knowledge_media_handler
+# здесь больше не используются: bootstrap регистрирует обработчики
+# непосредственно перед запуском polling.
+knowledge.init_knowledge_db()
+knowledge_bootstrap.install(bot)
 knowledge_texts_ai.install()
-knowledge_guard.install()
 ai_feature.install(bot)
 ui_router.install(bot)
 
