@@ -1,33 +1,52 @@
-"""Надёжное подключение базы знаний к Application после создания приложения."""
+"""Надёжное подключение базы знаний к Application."""
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram import ReplyKeyboardMarkup
 from telegram.ext import Application, CallbackQueryHandler, MessageHandler, filters
 
 import knowledge
 from knowledge_media_handler import handle_knowledge_photo
 
-
 _installed = False
 _original_run_polling = None
+_original_handle_message = None
+
+
+async def _knowledge_first_message(update, context):
+    """Перехватывает активную админскую сессию базы знаний до parser.py."""
+    if not update.message or not update.effective_user:
+        return False
+
+    admin_id = update.effective_user.id
+    if admin_id != knowledge.ADMIN_ID:
+        return False
+
+    session = knowledge.get_session(admin_id)
+    if not session:
+        return False
+
+    # Текст в активной сессии базы знаний всегда относится к ней,
+    # даже если это пересланное сообщение от EfinAgentBot.
+    await knowledge.handle_knowledge_text(update, context)
+    return True
 
 
 def _add_knowledge_handlers(application):
-    """Добавляет обработчики базы знаний ровно один раз на экземпляр Application."""
+    """Добавляет обработчики базы знаний один раз."""
     if application.bot_data.get("_efin_knowledge_handlers"):
         return
 
     knowledge.init_knowledge_db()
 
-    # Callback-кнопки базы знаний имеют приоритет над обычной админкой.
+    # Callback-кнопки базы знаний обрабатываются раньше админки.
     application.add_handler(
         CallbackQueryHandler(
             knowledge.handle_knowledge_callback,
-            pattern=r"^(kb_|admin_kb_)" ,
+            pattern=r"^(kb_|admin_kb_)",
         ),
         group=-100,
     )
 
-    # Тексты активной сессии базы знаний имеют приоритет над parser.py.
+    # Текст/название проекта/пересланные сообщения.
     application.add_handler(
         MessageHandler(
             knowledge.KnowledgeTextFilter(),
@@ -36,6 +55,7 @@ def _add_knowledge_handlers(application):
         group=-100,
     )
 
+    # PDF/DOCX/PPTX/TXT и другие документы.
     application.add_handler(
         MessageHandler(
             knowledge.KnowledgeDocumentFilter(),
@@ -44,7 +64,7 @@ def _add_knowledge_handlers(application):
         group=-100,
     )
 
-    # Фото в активной сессии добавляются как отдельный материал.
+    # Фото в активной сессии.
     application.add_handler(
         MessageHandler(
             filters.PHOTO & filters.User(knowledge.ADMIN_ID),
@@ -78,13 +98,26 @@ def _patch_admin_menu(bot_module):
 
 
 def install(bot_module):
-    global _installed, _original_run_polling
+    global _installed, _original_run_polling, _original_handle_message
 
     if _installed:
         return
 
     knowledge.init_knowledge_db()
     _patch_admin_menu(bot_module)
+
+    # Дополнительная страховка: даже если обычный handler bot.py
+    # доберётся до сообщения, активная база знаний имеет приоритет.
+    if hasattr(bot_module, "handle_message"):
+        _original_handle_message = bot_module.handle_message
+
+        async def handle_message_with_knowledge(update, context):
+            handled = await _knowledge_first_message(update, context)
+            if handled:
+                return
+            return await _original_handle_message(update, context)
+
+        bot_module.handle_message = handle_message_with_knowledge
 
     _original_run_polling = Application.run_polling
 
