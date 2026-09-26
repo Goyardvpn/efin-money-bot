@@ -20,6 +20,7 @@ NAVIGATION_TEXTS = {
 
 
 async def _knowledge_first_message(update, context):
+    """Перехватывает только текст администратора, когда активна KB-сессия."""
     if not update.message or not update.effective_user:
         return False
 
@@ -56,8 +57,6 @@ async def _navigation_priority_handler(update, context):
         except Exception:
             pass
 
-        # Передаём выход в уже установленный ui_router, который покажет
-        # правильное меню и завершит текущую функциональную сессию.
         import bot
         handler = getattr(bot, "handle_message", None)
         if handler is not None:
@@ -65,8 +64,6 @@ async def _navigation_priority_handler(update, context):
         return
 
     if text == "📚 База знаний" and user_id == knowledge.ADMIN_ID:
-        # В админском меню эта кнопка должна открывать БЗ напрямую,
-        # а не попадать в parser заявок.
         knowledge.finish_session(user_id)
         await update.message.reply_text(
             "📚 Управление базой знаний:",
@@ -75,27 +72,60 @@ async def _navigation_priority_handler(update, context):
         return
 
 
+async def _knowledge_document_priority_handler(update, context):
+    """Файлы KB идут раньше parser/AI и не должны теряться среди MessageHandler-ов."""
+    if not update.message or not update.effective_user or not update.message.document:
+        return
+    if update.effective_user.id != knowledge.ADMIN_ID:
+        return
+    if not knowledge.get_session(knowledge.ADMIN_ID):
+        return
+
+    await knowledge.handle_knowledge_document(update, context)
+
+
+async def _knowledge_photo_priority_handler(update, context):
+    """Фото KB идут отдельным приоритетным обработчиком."""
+    if not update.message or not update.effective_user or not update.message.photo:
+        return
+    if update.effective_user.id != knowledge.ADMIN_ID:
+        return
+    if not knowledge.get_session(knowledge.ADMIN_ID):
+        return
+
+    await handle_knowledge_photo(update, context)
+
+
 def _add_knowledge_handlers(application):
     if application.bot_data.get("_efin_knowledge_handlers"):
         return
 
     knowledge.init_knowledge_db()
 
-    # Самый ранний приоритет: выход из AI/БЗ и вход администратора в БЗ.
+    # Группа -300: KB-сессия имеет абсолютный приоритет над parser/AI.
+    # Навигация при этом остаётся отдельным маршрутом.
     application.add_handler(
         MessageHandler(
             filters.TEXT & filters.Regex(r"^(⬅️ Выйти|📚 База знаний)$"),
             _navigation_priority_handler,
         ),
-        group=-200,
+        group=-300,
     )
 
     application.add_handler(
-        CallbackQueryHandler(
-            knowledge.handle_knowledge_callback,
-            pattern=r"^(kb_|admin_kb_)",
+        MessageHandler(
+            filters.Document.ALL & filters.User(knowledge.ADMIN_ID),
+            _knowledge_document_priority_handler,
         ),
-        group=-100,
+        group=-300,
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.PHOTO & filters.User(knowledge.ADMIN_ID),
+            _knowledge_photo_priority_handler,
+        ),
+        group=-300,
     )
 
     application.add_handler(
@@ -103,23 +133,15 @@ def _add_knowledge_handlers(application):
             knowledge.KnowledgeTextFilter(),
             knowledge.handle_knowledge_text,
         ),
-        group=-100,
+        group=-300,
     )
 
     application.add_handler(
-        MessageHandler(
-            knowledge.KnowledgeDocumentFilter(),
-            knowledge.handle_knowledge_document,
+        CallbackQueryHandler(
+            knowledge.handle_knowledge_callback,
+            pattern=r"^(kb_|admin_kb_)",
         ),
-        group=-100,
-    )
-
-    application.add_handler(
-        MessageHandler(
-            filters.PHOTO & filters.User(knowledge.ADMIN_ID),
-            handle_knowledge_photo,
-        ),
-        group=-100,
+        group=-200,
     )
 
     application.bot_data["_efin_knowledge_handlers"] = True
