@@ -10,9 +10,20 @@ _installed = False
 _original_run_polling = None
 _original_handle_message = None
 
+# Сообщения навигации никогда не должны считаться названием проекта
+# или материалом базы знаний. Особенно важно для администратора: если
+# он ушёл из БЗ, старая сессия не должна перехватывать Efin AI.
+NAVIGATION_TEXTS = {
+    "🤖 Efin AI",
+    "👤 Личный кабинет",
+    "🛠 Админ-панель",
+    "⬅️ Выйти",
+    "📚 База знаний",
+}
+
 
 async def _knowledge_first_message(update, context):
-    """Перехватывает активную админскую сессию базы знаний до parser.py."""
+    """Перехватывает только сообщения активной сессии базы знаний."""
     if not update.message or not update.effective_user:
         return False
 
@@ -24,8 +35,18 @@ async def _knowledge_first_message(update, context):
     if not session:
         return False
 
-    # Текст в активной сессии базы знаний всегда относится к ней,
-    # даже если это пересланное сообщение от EfinAgentBot.
+    text = (update.message.text or "").strip()
+
+    # КРИТИЧЕСКИЙ ФИКС:
+    # навигация должна пройти дальше в ui_router / ai_feature.
+    # Перед передачей очищаем старую сессию БЗ, чтобы следующий текст
+    # тоже не попал в parser базы знаний.
+    if text in NAVIGATION_TEXTS:
+        knowledge.finish_session(admin_id)
+        return False
+
+    # Любой другой текст/пересланное сообщение в активной сессии БЗ
+    # относится к базе знаний, включая сообщения от EfinAgentBot.
     await knowledge.handle_knowledge_text(update, context)
     return True
 
