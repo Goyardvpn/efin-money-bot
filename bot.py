@@ -41,6 +41,11 @@ from database import (
     calculate_periods,
     get_users,
     get_global_stats,
+    add_tariff,
+    update_tariff,
+    delete_tariff,
+    get_tariff,
+    get_all_rates,
 )
 
 from parser import parse_message
@@ -305,6 +310,209 @@ def finish_manual_application_date(user_id: int):
 
 def is_manual_application_date_active(user_id: int):
     return user_id in MANUAL_APPLICATION_DATE
+
+
+# =========================================================
+# СОСТОЯНИЕ УПРАВЛЕНИЯ ТАРИФОМ
+# =========================================================
+
+TARIFF_SESSIONS = {}
+
+
+def start_tariff_session(user_id, mode, trigger=None):
+    TARIFF_SESSIONS[user_id] = {
+        "mode": mode,
+        "trigger": trigger,
+        "step": "trigger" if mode == "add" else "name",
+        "name": None,
+        "advance": None,
+        "settlement": None,
+    }
+
+
+def finish_tariff_session(user_id):
+    TARIFF_SESSIONS.pop(user_id, None)
+
+
+def get_tariff_session(user_id):
+    return TARIFF_SESSIONS.get(user_id)
+
+
+def build_tariffs_keyboard():
+    rows = [
+        [
+            InlineKeyboardButton(
+                "➕ Добавить тариф",
+                callback_data="admin_tariff_add",
+            )
+        ]
+    ]
+
+    for tariff in get_all_rates():
+        rows.append([
+            InlineKeyboardButton(
+                f"✏️ {tariff['trigger']} — {tariff['name']}",
+                callback_data=f"admin_tariff_edit:{tariff['trigger']}",
+            )
+        ])
+        rows.append([
+            InlineKeyboardButton(
+                f"🗑 Отключить {tariff['trigger']}",
+                callback_data=f"admin_tariff_delete:{tariff['trigger']}",
+            )
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            "⬅️ Назад",
+            callback_data="admin_panel",
+        )
+    ])
+
+    return InlineKeyboardMarkup(rows)
+
+
+async def show_tariffs(query):
+    tariffs = get_all_rates()
+
+    text = "⚙️ ТАРИФЫ\n\n"
+
+    if not tariffs:
+        text += "Тарифов пока нет.\n\n"
+    else:
+        for tariff in tariffs:
+            total = tariff["advance"] + tariff["settlement"]
+            text += (
+                f"🔹 {tariff['trigger']} — {tariff['name']}\n"
+                f"   💵 Аванс: {tariff['advance']} ₽\n"
+                f"   🟠 Сверка: {tariff['settlement']} ₽\n"
+                f"   💰 Всего: {total} ₽\n\n"
+            )
+
+    text += "Выбери действие:"
+
+    await query.edit_message_text(
+        text,
+        reply_markup=build_tariffs_keyboard(),
+    )
+
+
+async def handle_tariff_text(update, user_id, text):
+    session = get_tariff_session(user_id)
+
+    if not session:
+        return False
+
+    if text == "❌ Отмена":
+        finish_tariff_session(user_id)
+        await update.message.reply_text(
+            "❌ Изменение тарифа отменено.",
+            reply_markup=ADMIN_PANEL_MENU,
+        )
+        return True
+
+    mode = session["mode"]
+
+    if mode == "add" and session["step"] == "trigger":
+        trigger = text.strip().upper()
+
+        if not re.fullmatch(r"[А-ЯЁ]{2}", trigger):
+            await update.message.reply_text(
+                "❌ Код должен состоять ровно из двух русских букв.\n\n"
+                "Например: НБ"
+            )
+            return True
+
+        if get_tariff(trigger):
+            await update.message.reply_text(
+                "⚠️ Такой код уже существует.\n"
+                "Выбери другой код или используй редактирование."
+            )
+            return True
+
+        session["trigger"] = trigger
+        session["step"] = "name"
+
+        await update.message.reply_text(
+            f"🏦 Код: {trigger}\n\n"
+            "Теперь напиши название банка/продукта:"
+        )
+        return True
+
+    if session["step"] == "name":
+        name = text.strip()
+
+        if not name:
+            await update.message.reply_text("❌ Название не может быть пустым.")
+            return True
+
+        session["name"] = name
+        session["step"] = "advance"
+
+        await update.message.reply_text(
+            "💵 Напиши сумму аванса в рублях.\n\n"
+            "Например: 300"
+        )
+        return True
+
+    if session["step"] == "advance":
+        if not text.strip().isdigit():
+            await update.message.reply_text(
+                "❌ Введи целое число рублей. Например: 300"
+            )
+            return True
+
+        session["advance"] = int(text.strip())
+        session["step"] = "settlement"
+
+        await update.message.reply_text(
+            "🟠 Напиши сумму сверки в рублях.\n\n"
+            "Например: 100"
+        )
+        return True
+
+    if session["step"] == "settlement":
+        if not text.strip().isdigit():
+            await update.message.reply_text(
+                "❌ Введи целое число рублей. Например: 100"
+            )
+            return True
+
+        session["settlement"] = int(text.strip())
+
+        if mode == "add":
+            add_tariff(
+                session["trigger"],
+                session["name"],
+                session["advance"],
+                session["settlement"],
+            )
+            action = "добавлен"
+        else:
+            update_tariff(
+                session["trigger"],
+                name=session["name"],
+                advance=session["advance"],
+                settlement=session["settlement"],
+            )
+            action = "изменён"
+
+        trigger = session["trigger"]
+        tariff = get_tariff(trigger)
+        finish_tariff_session(user_id)
+
+        await update.message.reply_text(
+            "✅ ТАРИФ СОХРАНЁН\n\n"
+            f"🔹 {tariff['trigger']} — {tariff['name']}\n"
+            f"💵 Аванс: {tariff['advance']} ₽\n"
+            f"🟠 Сверка: {tariff['settlement']} ₽\n"
+            f"💰 Всего: {tariff['advance'] + tariff['settlement']} ₽\n\n"
+            f"Тариф {action}.",
+            reply_markup=ADMIN_PANEL_MENU,
+        )
+        return True
+
+    return False
 
 
 # =========================================================
@@ -2735,6 +2943,109 @@ async def handle_admin_callback(
     data = query.data or ""
 
     # =====================================================
+    # ТАРИФЫ
+    # =====================================================
+
+    if data == "admin_tariffs":
+        await show_tariffs(query)
+        return
+
+    if data == "admin_tariff_add":
+        start_tariff_session(admin_id, "add")
+        await query.message.reply_text(
+            "➕ ДОБАВЛЕНИЕ ТАРИФА\n\n"
+            "Напиши код тарифа — ровно 2 русские буквы.\n"
+            "Например: НБ\n\n"
+            "Для отмены: ❌ Отмена",
+            reply_markup=ReplyKeyboardMarkup(
+                [["❌ Отмена"]],
+                resize_keyboard=True,
+            ),
+        )
+        return
+
+    if data.startswith("admin_tariff_edit:"):
+        trigger = data.split(":", 1)[1]
+        tariff = get_tariff(trigger)
+
+        if not tariff:
+            await query.answer("Тариф не найден.", show_alert=True)
+            return
+
+        start_tariff_session(admin_id, "edit", trigger)
+        session = get_tariff_session(admin_id)
+        session["name"] = tariff["name"]
+        session["advance"] = tariff["advance"]
+        session["settlement"] = tariff["settlement"]
+
+        await query.message.reply_text(
+            f"✏️ ИЗМЕНЕНИЕ ТАРИФА {trigger}\n\n"
+            f"Текущее название: {tariff['name']}\n"
+            f"Текущий аванс: {tariff['advance']} ₽\n"
+            f"Текущая сверка: {tariff['settlement']} ₽\n\n"
+            "Напиши новое название:",
+            reply_markup=ReplyKeyboardMarkup(
+                [["❌ Отмена"]],
+                resize_keyboard=True,
+            ),
+        )
+        return
+
+    if data.startswith("admin_tariff_delete:"):
+        trigger = data.split(":", 1)[1]
+        tariff = get_tariff(trigger)
+
+        if not tariff:
+            await query.answer("Тариф уже отключён.", show_alert=True)
+            return
+
+        await query.edit_message_text(
+            f"🗑 ОТКЛЮЧЕНИЕ ТАРИФА\n\n"
+            f"🔹 {tariff['trigger']} — {tariff['name']}\n"
+            f"💵 Аванс: {tariff['advance']} ₽\n"
+            f"🟠 Сверка: {tariff['settlement']} ₽\n\n"
+            "Отключить?",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "✅ Да, отключить",
+                        callback_data=f"admin_tariff_confirm_delete:{trigger}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "❌ Отмена",
+                        callback_data="admin_tariffs",
+                    )
+                ],
+            ]),
+        )
+        return
+
+    if data.startswith("admin_tariff_confirm_delete:"):
+        trigger = data.split(":", 1)[1]
+        tariff = get_tariff(trigger)
+
+        if not tariff:
+            await query.answer("Тариф уже отключён.", show_alert=True)
+            return
+
+        delete_tariff(trigger)
+        await query.edit_message_text(
+            f"🗑 Тариф {trigger} отключён.\n\n"
+            "Заявки с этим кодом больше не будут "
+            "распознаваться как оплачиваемые, пока тариф "
+            "не будет восстановлен.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "⚙️ К тарифам",
+                    callback_data="admin_tariffs",
+                )]
+            ]),
+        )
+        return
+
+    # =====================================================
     # СПИСОК ПОЛЬЗОВАТЕЛЕЙ
     # =====================================================
 
@@ -3173,6 +3484,20 @@ async def handle_message(
     save_user(update)
 
     # =====================================================
+    # АДМИНСКОЕ УПРАВЛЕНИЕ ТАРИФОМ
+    # =====================================================
+
+    if user_id == ADMIN_ID:
+        if get_tariff_session(user_id):
+            handled = await handle_tariff_text(
+                update,
+                user_id,
+                text,
+            )
+            if handled:
+                return
+
+    # =====================================================
     # АДМИНСКИЙ РУЧНОЙ ВВОД ДАТЫ УДАЛЕНИЯ
     # =====================================================
 
@@ -3596,15 +3921,20 @@ async def handle_message(
             await update.message.reply_text(
                 "⛔ Доступ запрещён."
             )
-
             return
 
         await update.message.reply_text(
-            "⚙️ Раздел «Тарифы» пока "
-            "в разработке.",
+            "⚙️ Управление тарифами открывается "
+            "через кнопки ниже.",
             reply_markup=ADMIN_PANEL_MENU,
         )
 
+        # Для ReplyKeyboard нельзя передать InlineKeyboard,
+        # поэтому отправляем отдельное сообщение с кнопками.
+        await update.message.reply_text(
+            "Открой список тарифов 👇",
+            reply_markup=build_tariffs_keyboard(),
+        )
         return
 
     # =====================================================
