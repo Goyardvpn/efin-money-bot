@@ -776,8 +776,113 @@ def get_global_stats():
 
 
 # =========================================================
+# ПЕРЕРАСЧЁТ ЗАРАБОТКА ПО АКТУАЛЬНЫМ ТАРИФАМ
+# =========================================================
+
+def recalculate_earnings(start_date=None, end_date=None):
+    payable_statuses = {
+        "заявка принята",
+        "успешно подписана",
+        "успешно выдана",
+    }
+
+    with get_connection() as conn:
+        query = """
+            SELECT e.id, e.trigger, e.status,
+                   e.advance, e.settlement, e.total,
+                   t.advance AS new_advance,
+                   t.settlement AS new_settlement
+            FROM earnings e
+            INNER JOIN tariffs t
+                ON t.trigger = e.trigger
+               AND t.is_active = 1
+            WHERE 1 = 1
+        """
+        params = []
+
+        if start_date is not None:
+            query += " AND date(e.created_at) >= ?"
+            params.append(start_date.isoformat())
+
+        if end_date is not None:
+            query += " AND date(e.created_at) <= ?"
+            params.append(end_date.isoformat())
+
+        rows = conn.execute(query, params).fetchall()
+
+        updated = 0
+        unchanged = 0
+        old_total = 0
+        new_total = 0
+
+        for row in rows:
+            old_sum = row["total"]
+
+            if row["status"] in payable_statuses:
+                new_advance = row["new_advance"]
+                new_settlement = row["new_settlement"]
+            else:
+                new_advance = 0
+                new_settlement = 0
+
+            new_sum = new_advance + new_settlement
+
+            if (
+                row["advance"] != new_advance
+                or row["settlement"] != new_settlement
+                or old_sum != new_sum
+            ):
+                conn.execute("""
+                    UPDATE earnings
+                    SET advance = ?, settlement = ?, total = ?
+                    WHERE id = ?
+                """, (new_advance, new_settlement, new_sum, row["id"]))
+
+                updated += 1
+                old_total += old_sum
+                new_total += new_sum
+            else:
+                unchanged += 1
+
+        missing_query = """
+            SELECT COUNT(*)
+            FROM earnings e
+            LEFT JOIN tariffs t
+                ON t.trigger = e.trigger
+               AND t.is_active = 1
+            WHERE t.trigger IS NULL
+        """
+        missing_params = []
+
+        if start_date is not None:
+            missing_query += " AND date(e.created_at) >= ?"
+            missing_params.append(start_date.isoformat())
+
+        if end_date is not None:
+            missing_query += " AND date(e.created_at) <= ?"
+            missing_params.append(end_date.isoformat())
+
+        skipped = conn.execute(
+            missing_query,
+            missing_params,
+        ).fetchone()[0]
+
+        conn.commit()
+
+    return {
+        "updated": updated,
+        "unchanged": unchanged,
+        "skipped": skipped,
+        "old_total": old_total,
+        "new_total": new_total,
+        "difference": new_total - old_total,
+    }
+
+
+# =========================================================
 # УДАЛЕНИЕ
 # =========================================================
+
 
 def delete_all_user_earnings(user_id):
     with get_connection() as conn:
