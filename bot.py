@@ -49,6 +49,8 @@ from database import (
     get_tariff,
     get_all_rates,
     recalculate_earnings,
+    get_maintenance_mode,
+    set_maintenance_mode,
 )
 
 from parser import parse_message
@@ -96,6 +98,7 @@ ADMIN_PANEL_MENU = ReplyKeyboardMarkup(
         ["📋 Все заявки"],
         ["⚙️ Тарифы"],
         ["🔄 Пересчитать заявки"],
+        ["🔧 Технический режим"],
         ["💸 Корректировка"],
         ["📢 Рассылка"],
         ["⬅️ Назад"],
@@ -3141,6 +3144,35 @@ async def handle_admin_callback(
 
 
     # =====================================================
+    # ТЕХНИЧЕСКИЙ РЕЖИМ
+    # =====================================================
+
+    if data == "admin_maintenance_on":
+        set_maintenance_mode(True)
+        await query.edit_message_text(
+            "🔧 ТЕХНИЧЕСКИЙ РЕЖИМ ВКЛЮЧЁН\n\n"
+            "Пользователи будут получать сообщение о технических работах.\n"
+            "Администратор продолжает иметь полный доступ к боту."
+        )
+        await query.message.reply_text(
+            "Админ-панель 👇",
+            reply_markup=ADMIN_PANEL_MENU,
+        )
+        return
+
+    if data == "admin_maintenance_off":
+        set_maintenance_mode(False)
+        await query.edit_message_text(
+            "✅ ТЕХНИЧЕСКИЙ РЕЖИМ ВЫКЛЮЧЕН\n\n"
+            "Бот снова доступен пользователям."
+        )
+        await query.message.reply_text(
+            "Админ-панель 👇",
+            reply_markup=ADMIN_PANEL_MENU,
+        )
+        return
+
+    # =====================================================
     # ПЕРЕРАСЧЁТ ЗАЯВОК
     # =====================================================
 
@@ -3817,6 +3849,18 @@ async def handle_message(
     text = update.message.text
     user_id = update.effective_user.id
 
+    # В техническом режиме пользователи получают только
+    # уведомление о временной недоступности.
+    # Администратор продолжает работать с ботом.
+    if user_id != ADMIN_ID and get_maintenance_mode():
+        await update.message.reply_text(
+            "🛠 ТЕХНИЧЕСКИЕ РАБОТЫ\n\n"
+            "Бот сейчас временно недоступен.\n"
+            "Я уже занимаюсь этим и скоро вернусь ❤️\n\n"
+            "Спасибо за понимание!"
+        )
+        return
+
     save_user(update)
 
     # =====================================================
@@ -4298,6 +4342,41 @@ async def handle_message(
                 [["❌ Отмена"]],
                 resize_keyboard=True,
             ),
+        )
+        return
+
+    if text == "🔧 Технический режим":
+        if user_id != ADMIN_ID:
+            await update.message.reply_text(
+                "⛔ Доступ запрещён.",
+                reply_markup=get_menu(user_id),
+            )
+            return
+
+        enabled = get_maintenance_mode()
+
+        await update.message.reply_text(
+            "🔧 ТЕХНИЧЕСКИЙ РЕЖИМ\n\n"
+            f"Сейчас: {'🟠 ВКЛЮЧЁН' if enabled else '🟢 ВЫКЛЮЧЕН'}\n\n"
+            "Выбери действие:",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔧 Включить",
+                        callback_data="admin_maintenance_on",
+                    ),
+                    InlineKeyboardButton(
+                        "🟢 Выключить",
+                        callback_data="admin_maintenance_off",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        "⬅️ Назад",
+                        callback_data="admin_panel",
+                    )
+                ],
+            ]),
         )
         return
 
