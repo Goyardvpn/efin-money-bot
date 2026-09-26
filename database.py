@@ -84,6 +84,10 @@ def init_db():
 
         conn.commit()
 
+    # При первом запуске заполняем БД стандартными тарифами.
+    # Существующие тарифы не перезаписываются.
+    seed_default_tariffs()
+
 
 # =========================================================
 # ТАРИФЫ
@@ -239,14 +243,30 @@ def seed_default_tariffs():
         "ОБ": ("Ozon Банк — идентификация", 200, 100),
     }
 
-    for trigger, data in defaults.items():
-        name, advance, settlement = data
-        add_tariff(
-            trigger,
-            name,
-            advance,
-            settlement,
-        )
+    # Добавляем только отсутствующие тарифы.
+    # Если администратор изменил тариф в боте,
+    # его изменения не будут перезаписаны при перезапуске.
+    with get_connection() as conn:
+        for trigger, data in defaults.items():
+            name, advance, settlement = data
+
+            conn.execute("""
+                INSERT OR IGNORE INTO tariffs (
+                    trigger,
+                    name,
+                    advance,
+                    settlement,
+                    is_active
+                )
+                VALUES (?, ?, ?, ?, 1)
+            """, (
+                trigger,
+                name,
+                advance,
+                settlement,
+            ))
+
+        conn.commit()
 
 
 # =========================================================
