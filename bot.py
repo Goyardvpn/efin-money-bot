@@ -478,18 +478,11 @@ async def handle_recalc_text(update, admin_id, text):
         session["end_date"] = selected
 
         await update.message.reply_text(
-            "⚠️ ПЕРЕРАСЧЁТ ЗАЯВОК
-
-"
+            "⚠️ ПЕРЕРАСЧЁТ ЗАЯВОК\n\n"
             f"📅 Период: {session['start_date'].strftime('%d.%m.%Y')} — "
-            f"{selected.strftime('%d.%m.%Y')}
-
-"
-            "Сохранённые заявки будут пересчитаны по текущим тарифам.
-"
-            "Заявки с отключённым тарифом останутся без изменений.
-
-"
+            f"{selected.strftime('%d.%m.%Y')}\n\n"
+            "Сохранённые заявки будут пересчитаны по текущим тарифам.\n"
+            "Заявки с отключённым тарифом останутся без изменений.\n\n"
             "Продолжить?",
             reply_markup=build_recalc_confirmation_keyboard(),
         )
@@ -4329,14 +4322,9 @@ async def handle_message(
         start_recalc_session(user_id)
 
         await update.message.reply_text(
-            "🔄 ПЕРЕРАСЧЁТ ЗАЯВОК
-
-"
-            "Введи начальную дату в формате ДД.ММ.ГГГГ.
-"
-            "Например: 01.09.2026
-
-"
+            "🔄 ПЕРЕРАСЧЁТ ЗАЯВОК\n\n"
+            "Введи начальную дату в формате ДД.ММ.ГГГГ.\n"
+            "Например: 01.09.2026\n\n"
             "Для отмены: ❌ Отмена",
             reply_markup=ReplyKeyboardMarkup(
                 [["❌ Отмена"]],
