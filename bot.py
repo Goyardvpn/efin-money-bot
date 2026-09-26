@@ -3180,24 +3180,14 @@ async def handle_admin_callback(
         )
 
         await query.edit_message_text(
-            "✅ ПЕРЕРАСЧЁТ ЗАВЕРШЁН
-
-"
+            "✅ ПЕРЕРАСЧЁТ ЗАВЕРШЁН\n\n"
             f"📅 Период: {start_date.strftime('%d.%m.%Y')} — "
-            f"{end_date.strftime('%d.%m.%Y')}
-
-"
-            f"🔄 Изменено: {result['updated']}
-"
-            f"⏭ Без изменений: {result['unchanged']}
-"
-            f"⚠️ Пропущено: {result['skipped']}
-
-"
-            f"💰 Было: {result['old_total']} ₽
-"
-            f"💰 Стало: {result['new_total']} ₽
-"
+            f"{end_date.strftime('%d.%m.%Y')}\n\n"
+            f"🔄 Изменено: {result['updated']}\n"
+            f"⏭ Без изменений: {result['unchanged']}\n"
+            f"⚠️ Пропущено: {result['skipped']}\n\n"
+            f"💰 Было: {result['old_total']} ₽\n"
+            f"💰 Стало: {result['new_total']} ₽\n"
             f"📈 Разница: {difference_text}"
         )
 
