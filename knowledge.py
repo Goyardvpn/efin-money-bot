@@ -10,71 +10,84 @@ KB_SESSIONS = {}
 
 def init_knowledge_db():
     with get_connection() as conn:
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS knowledge_projects (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                file_id TEXT,
-                file_name TEXT,
-                mime_type TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )"""
-        )
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS knowledge_files (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER NOT NULL,
-                file_id TEXT NOT NULL,
-                file_name TEXT NOT NULL,
-                mime_type TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(project_id, file_id),
-                FOREIGN KEY(project_id) REFERENCES knowledge_projects(id) ON DELETE CASCADE
-            )"""
-        )
-        old = conn.execute(
-            "SELECT id, file_id, file_name, mime_type FROM knowledge_projects WHERE file_id IS NOT NULL"
-        ).fetchall()
+        conn.execute("""CREATE TABLE IF NOT EXISTS knowledge_projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            file_id TEXT,
+            file_name TEXT,
+            mime_type TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS knowledge_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            file_id TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            mime_type TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, file_id),
+            FOREIGN KEY(project_id) REFERENCES knowledge_projects(id) ON DELETE CASCADE
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS knowledge_texts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(project_id) REFERENCES knowledge_projects(id) ON DELETE CASCADE
+        )""")
+        old = conn.execute("SELECT id,file_id,file_name,mime_type FROM knowledge_projects WHERE file_id IS NOT NULL").fetchall()
         for row in old:
-            conn.execute(
-                """INSERT OR IGNORE INTO knowledge_files(project_id,file_id,file_name,mime_type)
-                   VALUES(?,?,?,?)""",
-                (row["id"], row["file_id"], row["file_name"] or "Памятка", row["mime_type"] or ""),
-            )
+            conn.execute("INSERT OR IGNORE INTO knowledge_files(project_id,file_id,file_name,mime_type) VALUES(?,?,?,?)", (row["id"], row["file_id"], row["file_name"] or "Памятка", row["mime_type"] or ""))
         conn.commit()
 
 
 def get_projects():
     with get_connection() as conn:
-        return conn.execute(
-            "SELECT id,name,file_id,file_name,mime_type FROM knowledge_projects ORDER BY name COLLATE NOCASE"
-        ).fetchall()
+        return conn.execute("SELECT id,name,file_id,file_name,mime_type FROM knowledge_projects ORDER BY name COLLATE NOCASE").fetchall()
 
 
 def get_project(project_id):
     with get_connection() as conn:
-        return conn.execute(
-            "SELECT id,name,file_id,file_name,mime_type FROM knowledge_projects WHERE id=?",
-            (project_id,),
-        ).fetchone()
+        return conn.execute("SELECT id,name,file_id,file_name,mime_type FROM knowledge_projects WHERE id=?", (project_id,)).fetchone()
 
 
 def get_project_files(project_id):
     with get_connection() as conn:
-        return conn.execute(
-            "SELECT id,project_id,file_id,file_name,mime_type FROM knowledge_files WHERE project_id=? ORDER BY id",
-            (project_id,),
-        ).fetchall()
+        return conn.execute("SELECT id,project_id,file_id,file_name,mime_type FROM knowledge_files WHERE project_id=? ORDER BY id").fetchall()
+
+
+def get_project_texts(project_id):
+    with get_connection() as conn:
+        return conn.execute("SELECT id,project_id,text,created_at FROM knowledge_texts WHERE project_id=? ORDER BY id", (project_id,)).fetchall()
 
 
 def get_project_file_count(project_id):
     with get_connection() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) AS count FROM knowledge_files WHERE project_id=?",
-            (project_id,),
-        ).fetchone()
+        row = conn.execute("SELECT COUNT(*) AS count FROM knowledge_files WHERE project_id=?", (project_id,)).fetchone()
         return int(row["count"] if row else 0)
+
+
+def get_project_text_count(project_id):
+    with get_connection() as conn:
+        row = conn.execute("SELECT COUNT(*) AS count FROM knowledge_texts WHERE project_id=?", (project_id,)).fetchone()
+        return int(row["count"] if row else 0)
+
+
+def add_project_text(project_id, text):
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("Текст не может быть пустым.")
+    with get_connection() as conn:
+        conn.execute("INSERT INTO knowledge_texts(project_id,text) VALUES(?,?)", (project_id, text))
+        conn.execute("UPDATE knowledge_projects SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (project_id,))
+        conn.commit()
+
+
+def delete_project_text(text_id):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM knowledge_texts WHERE id=?", (text_id,))
+        conn.commit()
 
 
 def project_name_exists(name):
@@ -84,16 +97,10 @@ def project_name_exists(name):
 
 def add_project(name, file_id=None, file_name=None, mime_type=None):
     with get_connection() as conn:
-        cur = conn.execute(
-            "INSERT INTO knowledge_projects(name,file_id,file_name,mime_type,updated_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP)",
-            (name, file_id, file_name, mime_type),
-        )
+        cur = conn.execute("INSERT INTO knowledge_projects(name,file_id,file_name,mime_type,updated_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP)", (name, file_id, file_name, mime_type))
         project_id = cur.lastrowid
         if file_id:
-            conn.execute(
-                "INSERT INTO knowledge_files(project_id,file_id,file_name,mime_type) VALUES(?,?,?,?)",
-                (project_id, file_id, file_name or "Памятка", mime_type or ""),
-            )
+            conn.execute("INSERT INTO knowledge_files(project_id,file_id,file_name,mime_type) VALUES(?,?,?,?)", (project_id, file_id, file_name or "Памятка", mime_type or ""))
         conn.commit()
         return project_id
 
@@ -104,14 +111,8 @@ def add_project_file(project_id, file_id, file_name, mime_type=None):
         count = int(row["count"] if row else 0)
         if count >= MAX_FILES_PER_PROJECT:
             raise ValueError(f"В проекте уже максимум {MAX_FILES_PER_PROJECT} файлов.")
-        conn.execute(
-            "INSERT OR IGNORE INTO knowledge_files(project_id,file_id,file_name,mime_type) VALUES(?,?,?,?)",
-            (project_id, file_id, file_name or "Памятка", mime_type or ""),
-        )
-        conn.execute(
-            "UPDATE knowledge_projects SET file_id=?,file_name=?,mime_type=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (file_id, file_name or "Памятка", mime_type or "", project_id),
-        )
+        conn.execute("INSERT OR IGNORE INTO knowledge_files(project_id,file_id,file_name,mime_type) VALUES(?,?,?,?)", (project_id, file_id, file_name or "Памятка", mime_type or ""))
+        conn.execute("UPDATE knowledge_projects SET file_id=?,file_name=?,mime_type=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (file_id, file_name or "Памятка", mime_type or "", project_id))
         conn.commit()
 
 
@@ -122,25 +123,17 @@ def delete_project_file(file_row_id):
             return
         project_id = row["project_id"]
         conn.execute("DELETE FROM knowledge_files WHERE id=?", (file_row_id,))
-        first = conn.execute(
-            "SELECT file_id,file_name,mime_type FROM knowledge_files WHERE project_id=? ORDER BY id LIMIT 1",
-            (project_id,),
-        ).fetchone()
+        first = conn.execute("SELECT file_id,file_name,mime_type FROM knowledge_files WHERE project_id=? ORDER BY id LIMIT 1", (project_id,)).fetchone()
         if first:
-            conn.execute(
-                "UPDATE knowledge_projects SET file_id=?,file_name=?,mime_type=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (first["file_id"], first["file_name"], first["mime_type"], project_id),
-            )
+            conn.execute("UPDATE knowledge_projects SET file_id=?,file_name=?,mime_type=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (first["file_id"], first["file_name"], first["mime_type"], project_id))
         else:
-            conn.execute(
-                "UPDATE knowledge_projects SET file_id=NULL,file_name=NULL,mime_type=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (project_id,),
-            )
+            conn.execute("UPDATE knowledge_projects SET file_id=NULL,file_name=NULL,mime_type=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?", (project_id,))
         conn.commit()
 
 
 def delete_project(project_id):
     with get_connection() as conn:
+        conn.execute("DELETE FROM knowledge_texts WHERE project_id=?", (project_id,))
         conn.execute("DELETE FROM knowledge_files WHERE project_id=?", (project_id,))
         conn.execute("DELETE FROM knowledge_projects WHERE id=?", (project_id,))
         conn.commit()
@@ -157,8 +150,9 @@ def build_files_keyboard():
 def build_user_projects_keyboard():
     rows = []
     for project in get_projects():
-        count = get_project_file_count(project["id"])
-        rows.append([InlineKeyboardButton(f"📄 {project['name']} ({count})", callback_data=f"kb_project:{project['id']}")])
+        files = get_project_file_count(project["id"])
+        texts = get_project_text_count(project["id"])
+        rows.append([InlineKeyboardButton(f"📄 {project['name']} ({files + texts})", callback_data=f"kb_project:{project['id']}")])
     rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="kb_back")])
     return InlineKeyboardMarkup(rows)
 
@@ -166,10 +160,11 @@ def build_user_projects_keyboard():
 def build_admin_projects_keyboard():
     rows = [[InlineKeyboardButton("➕ Добавить проект", callback_data="admin_kb_add")]]
     for project in get_projects():
-        count = get_project_file_count(project["id"])
+        files = get_project_file_count(project["id"])
+        texts = get_project_text_count(project["id"])
         rows.append([
-            InlineKeyboardButton(f"✏️ {project['name']} ({count}/10)", callback_data=f"admin_kb_manage:{project['id']}"),
-            InlineKeyboardButton("🗑", callback_data=f"admin_kb_delete:{project['id']}"),
+            InlineKeyboardButton(f"✏️ {project['name']} ({files}ф/{texts}т)", callback_data=f"admin_kb_manage:{project['id']}"),
+            InlineKeyboardButton("🗑", callback_data=f"admin_kb_delete:{project['id']}")
         ])
     rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="admin_panel")])
     return InlineKeyboardMarkup(rows)
@@ -178,9 +173,12 @@ def build_admin_projects_keyboard():
 def build_project_manage_keyboard(project_id):
     rows = []
     for f in get_project_files(project_id):
-        rows.append([InlineKeyboardButton(f"🗑 {f['file_name']}", callback_data=f"admin_kb_file_delete:{f['id']}")])
+        rows.append([InlineKeyboardButton(f"🗑 📎 {f['file_name']}", callback_data=f"admin_kb_file_delete:{f['id']}")])
+    for t in get_project_texts(project_id):
+        preview = " ".join(t["text"].split())[:55]
+        rows.append([InlineKeyboardButton(f"🗑 📝 {preview}", callback_data=f"admin_kb_text_delete:{t['id']}")])
     if get_project_file_count(project_id) < MAX_FILES_PER_PROJECT:
-        rows.append([InlineKeyboardButton("➕ Добавить файл", callback_data=f"admin_kb_add_file:{project_id}")])
+        rows.append([InlineKeyboardButton("➕ Добавить файл или текст", callback_data=f"admin_kb_add_file:{project_id}")])
     rows.append([InlineKeyboardButton("⬅️ К проектам", callback_data="admin_kb_list")])
     return InlineKeyboardMarkup(rows)
 
@@ -199,7 +197,7 @@ def start_add_session(admin_id):
 
 
 def start_add_file_session(admin_id, project_id):
-    KB_SESSIONS[admin_id] = {"mode": "add_files", "project_id": project_id}
+    KB_SESSIONS[admin_id] = {"mode": "add_materials", "project_id": project_id}
 
 
 def finish_session(admin_id):
@@ -217,8 +215,10 @@ async def show_admin_knowledge(query):
         text += "Проектов пока нет.\n"
     else:
         for project in projects:
-            text += f"• {project['name']} — {get_project_file_count(project['id'])}/{MAX_FILES_PER_PROJECT} файлов\n"
-    text += "\nВ одном проекте можно хранить до 10 файлов."
+            files = get_project_file_count(project["id"])
+            texts = get_project_text_count(project["id"])
+            text += f"• {project['name']} — {files}/{MAX_FILES_PER_PROJECT} файлов + {texts} текстов\n"
+    text += "\nМожно добавлять PDF, DOCX, PPTX, TXT, фото и обычный текст."
     await query.edit_message_text(text, reply_markup=build_admin_projects_keyboard())
 
 
@@ -228,9 +228,13 @@ async def show_project_manage(query, project_id):
         await query.answer("Проект не найден.", show_alert=True)
         return
     files = get_project_files(project_id)
-    text = f"📁 ПРОЕКТ: {project['name']}\n\nФайлов: {len(files)}/{MAX_FILES_PER_PROJECT}\n\n"
+    texts = get_project_texts(project_id)
+    text = f"📁 ПРОЕКТ: {project['name']}\n\n📎 Файлов: {len(files)}/{MAX_FILES_PER_PROJECT}\n📝 Текстовых материалов: {len(texts)}\n\n"
     for i, f in enumerate(files, 1):
-        text += f"{i}. {f['file_name']}\n"
+        text += f"📎 {i}. {f['file_name']}\n"
+    for i, t in enumerate(texts, 1):
+        preview = " ".join(t["text"].split())[:100]
+        text += f"📝 {i}. {preview}\n"
     await query.edit_message_text(text, reply_markup=build_project_manage_keyboard(project_id))
 
 
@@ -275,9 +279,10 @@ async def handle_knowledge_text(update, context: ContextTypes.DEFAULT_TYPE):
         project_id = session.get("project_id")
         if project_id:
             project = get_project(project_id)
-            count = get_project_file_count(project_id)
+            files = get_project_file_count(project_id)
+            texts = get_project_text_count(project_id)
             finish_session(user_id)
-            await update.message.reply_text(f"✅ ГОТОВО\n\n📁 {project['name']}\n📎 Файлов: {count}/{MAX_FILES_PER_PROJECT}")
+            await update.message.reply_text(f"✅ ГОТОВО\n\n📁 {project['name']}\n📎 Файлов: {files}/{MAX_FILES_PER_PROJECT}\n📝 Текстов: {texts}")
         return
 
     if session.get("mode") == "add_project":
@@ -285,13 +290,30 @@ async def handle_knowledge_text(update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Название проекта не может быть пустым.")
             return
         if project_name_exists(text):
-            await update.message.reply_text("⚠️ Такой проект уже существует. Открой его в базе знаний и добавь файлы туда.")
+            await update.message.reply_text("⚠️ Такой проект уже существует. Открой его в базе знаний и добавь материалы туда.")
             return
         project_id = add_project(text)
         session["project_id"] = project_id
-        session["mode"] = "add_files"
+        session["mode"] = "add_materials"
         await update.message.reply_text(
-            f"✅ Проект «{text}» создан.\n\n📎 Отправляй файлы по одному. Можно добавить до {MAX_FILES_PER_PROJECT} файлов.\n\nКогда закончишь — нажми «✅ Готово».",
+            f"✅ Проект «{text}» создан.\n\n📎 Теперь просто отправляй сюда файлы, фото ИЛИ обычный текст из группы стажёров.\n\nКогда закончишь — нажми «✅ Готово».",
+            reply_markup=build_files_keyboard(),
+        )
+        return
+
+    if session.get("mode") == "add_materials":
+        project_id = session.get("project_id")
+        if not project_id or not text:
+            return
+        try:
+            add_project_text(project_id, text)
+        except ValueError as exc:
+            await update.message.reply_text(f"⚠️ {exc}")
+            return
+        project = get_project(project_id)
+        count = get_project_text_count(project_id)
+        await update.message.reply_text(
+            f"✅ Текст добавлен в базу\n\n📁 {project['name']}\n📝 Текстовых материалов: {count}\n\nМожно отправить следующий текст, файл или фото.",
             reply_markup=build_files_keyboard(),
         )
 
@@ -311,12 +333,8 @@ async def handle_knowledge_document(update, context: ContextTypes.DEFAULT_TYPE):
         return
     project = get_project(session["project_id"])
     count = get_project_file_count(session["project_id"])
-    if count >= MAX_FILES_PER_PROJECT:
-        finish_session(admin_id)
-        await update.message.reply_text(f"✅ Файл добавлен: {file_name}\n\n📁 {project['name']}\n📎 Файлов: {count}/{MAX_FILES_PER_PROJECT}\n\nЛимит проекта достигнут.")
-        return
     await update.message.reply_text(
-        f"✅ Файл добавлен: {file_name}\n\n📁 {project['name']}\n📎 Файлов: {count}/{MAX_FILES_PER_PROJECT}\n\nОтправь следующий файл или нажми «✅ Готово».",
+        f"✅ Файл добавлен: {file_name}\n\n📁 {project['name']}\n📎 Файлов: {count}/{MAX_FILES_PER_PROJECT}\n\nМожно отправить следующий файл, фото или обычный текст.\n\nНажми «✅ Готово», когда закончишь.",
         reply_markup=build_files_keyboard(),
     )
 
@@ -341,11 +359,15 @@ async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Проект не найден.", show_alert=True)
             return
         files = get_project_files(project_id)
-        if not files:
-            await query.answer("В проекте пока нет файлов.", show_alert=True)
-            return
+        texts = get_project_texts(project_id)
         for f in files:
             await context.bot.send_document(chat_id=user_id, document=f["file_id"], caption=f"📚 {project['name']}\n📎 {f['file_name']}")
+        if texts:
+            combined = "\n\n".join(t["text"] for t in texts)
+            for start in range(0, len(combined), 3800):
+                await context.bot.send_message(chat_id=user_id, text=f"📚 {project['name']} — текстовая часть\n\n{combined[start:start+3800]}")
+        if not files and not texts:
+            await query.answer("В проекте пока нет материалов.", show_alert=True)
         return
 
     if user_id != ADMIN_ID:
@@ -354,7 +376,7 @@ async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "admin_kb_add":
         start_add_session(ADMIN_ID)
-        await query.message.reply_text("➕ ДОБАВЛЕНИЕ ПРОЕКТА\n\nНапиши название проекта.\nНапример: МТС Банк\n\nПосле этого можно будет загрузить до 10 файлов.", reply_markup=build_cancel_keyboard())
+        await query.message.reply_text("➕ ДОБАВЛЕНИЕ ПРОЕКТА\n\nНапиши название проекта.\nНапример: МТС Банк\n\nПосле этого можно будет загружать файлы, фото и обычный текст.", reply_markup=build_cancel_keyboard())
         return
 
     if data.startswith("admin_kb_manage:"):
@@ -373,13 +395,10 @@ async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
         if not get_project(project_id):
             await query.answer("Проект не найден.", show_alert=True)
             return
-        if get_project_file_count(project_id) >= MAX_FILES_PER_PROJECT:
-            await query.answer("У проекта уже 10 файлов.", show_alert=True)
-            return
         start_add_file_session(ADMIN_ID, project_id)
         project = get_project(project_id)
         await query.message.reply_text(
-            f"📎 ДОБАВЛЕНИЕ ФАЙЛОВ\n\nПроект: {project['name']}\nСейчас файлов: {get_project_file_count(project_id)}/{MAX_FILES_PER_PROJECT}\n\nОтправляй файлы по одному. Когда закончишь — нажми «✅ Готово».",
+            f"📎 ДОБАВЛЕНИЕ МАТЕРИАЛОВ\n\nПроект: {project['name']}\nФайлов: {get_project_file_count(project_id)}/{MAX_FILES_PER_PROJECT}\nТекстов: {get_project_text_count(project_id)}\n\nОтправляй сюда файлы, фото или обычный текст. Когда закончишь — нажми «✅ Готово».",
             reply_markup=build_files_keyboard(),
         )
         return
@@ -398,6 +417,20 @@ async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
         await show_project_manage(query, row["project_id"])
         return
 
+    if data.startswith("admin_kb_text_delete:"):
+        try:
+            text_id = int(data.split(":", 1)[1])
+        except ValueError:
+            return
+        with get_connection() as conn:
+            row = conn.execute("SELECT project_id FROM knowledge_texts WHERE id=?", (text_id,)).fetchone()
+        if not row:
+            await query.answer("Текст уже удалён.", show_alert=True)
+            return
+        delete_project_text(text_id)
+        await show_project_manage(query, row["project_id"])
+        return
+
     if data.startswith("admin_kb_delete:"):
         try:
             project_id = int(data.split(":", 1)[1])
@@ -408,7 +441,7 @@ async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Проект уже удалён.", show_alert=True)
             return
         await query.edit_message_text(
-            f"🗑 УДАЛЕНИЕ ПРОЕКТА\n\n📁 {project['name']}\n\nУдалить проект вместе со всеми файлами?",
+            f"🗑 УДАЛЕНИЕ ПРОЕКТА\n\n📁 {project['name']}\n\nУдалить проект вместе со всеми материалами?",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Удалить", callback_data=f"admin_kb_confirm_delete:{project_id}")],
                 [InlineKeyboardButton("❌ Отмена", callback_data="admin_kb_list")],
