@@ -4,7 +4,7 @@ from telegram.ext import ContextTypes, MessageHandler, CallbackQueryHandler, fil
 from config import ADMIN_ID
 from database import get_connection
 
-MAX_FILES_PER_PROJECT = 10
+MAX_FILES_PER_PROJECT = 50
 KB_SESSIONS = {}
 
 
