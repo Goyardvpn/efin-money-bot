@@ -48,6 +48,7 @@ from database import (
     delete_tariff,
     get_tariff,
     get_all_rates,
+    recalculate_earnings,
 )
 
 from parser import parse_message
@@ -94,6 +95,7 @@ ADMIN_PANEL_MENU = ReplyKeyboardMarkup(
         ["📊 Общая статистика"],
         ["📋 Все заявки"],
         ["⚙️ Тарифы"],
+        ["🔄 Пересчитать заявки"],
         ["💸 Корректировка"],
         ["📢 Рассылка"],
         ["⬅️ Назад"],
@@ -364,6 +366,46 @@ def get_broadcast_session(admin_id: int):
     return BROADCAST_SESSIONS.get(admin_id)
 
 
+# =========================================================
+# СОСТОЯНИЕ ПЕРЕРАСЧЁТА
+# =========================================================
+
+RECALC_SESSIONS = {}
+
+
+def start_recalc_session(admin_id):
+    RECALC_SESSIONS[admin_id] = {
+        "step": "start_date",
+        "start_date": None,
+        "end_date": None,
+    }
+
+
+def finish_recalc_session(admin_id):
+    RECALC_SESSIONS.pop(admin_id, None)
+
+
+def get_recalc_session(admin_id):
+    return RECALC_SESSIONS.get(admin_id)
+
+
+def build_recalc_confirmation_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🔄 Пересчитать",
+                callback_data="admin_recalc_confirm",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "❌ Отмена",
+                callback_data="admin_recalc_cancel",
+            )
+        ],
+    ])
+
+
 def build_broadcast_confirmation_keyboard():
     return InlineKeyboardMarkup([
         [
@@ -379,6 +421,81 @@ def build_broadcast_confirmation_keyboard():
             )
         ],
     ])
+
+
+async def handle_recalc_text(update, admin_id, text):
+    session = get_recalc_session(admin_id)
+
+    if not session:
+        return False
+
+    if text == "❌ Отмена":
+        finish_recalc_session(admin_id)
+        await update.message.reply_text(
+            "❌ Перерасчёт отменён.",
+            reply_markup=ADMIN_PANEL_MENU,
+        )
+        return True
+
+    if session["step"] == "start_date":
+        try:
+            selected = datetime.strptime(
+                text.strip(),
+                "%d.%m.%Y",
+            ).date()
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Неверная дата. Формат: ДД.ММ.ГГГГ"
+            )
+            return True
+
+        session["start_date"] = selected
+        session["step"] = "end_date"
+
+        await update.message.reply_text(
+            "📅 Теперь введи конечную дату в формате ДД.ММ.ГГГГ."
+        )
+        return True
+
+    if session["step"] == "end_date":
+        try:
+            selected = datetime.strptime(
+                text.strip(),
+                "%d.%m.%Y",
+            ).date()
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Неверная дата. Формат: ДД.ММ.ГГГГ"
+            )
+            return True
+
+        if selected < session["start_date"]:
+            await update.message.reply_text(
+                "❌ Конечная дата не может быть раньше начальной."
+            )
+            return True
+
+        session["end_date"] = selected
+
+        await update.message.reply_text(
+            "⚠️ ПЕРЕРАСЧЁТ ЗАЯВОК
+
+"
+            f"📅 Период: {session['start_date'].strftime('%d.%m.%Y')} — "
+            f"{selected.strftime('%d.%m.%Y')}
+
+"
+            "Сохранённые заявки будут пересчитаны по текущим тарифам.
+"
+            "Заявки с отключённым тарифом останутся без изменений.
+
+"
+            "Продолжить?",
+            reply_markup=build_recalc_confirmation_keyboard(),
+        )
+        return True
+
+    return False
 
 
 async def handle_broadcast_text(update, admin_id, text):
@@ -3031,6 +3148,73 @@ async def handle_admin_callback(
 
 
     # =====================================================
+    # ПЕРЕРАСЧЁТ ЗАЯВОК
+    # =====================================================
+
+    if data == "admin_recalc_cancel":
+        finish_recalc_session(admin_id)
+        await query.edit_message_text("❌ Перерасчёт отменён.")
+        await query.message.reply_text(
+            "Админ-панель 👇",
+            reply_markup=ADMIN_PANEL_MENU,
+        )
+        return
+
+    if data == "admin_recalc_confirm":
+        session = get_recalc_session(admin_id)
+
+        if not session:
+            await query.answer(
+                "⚠️ Сессия перерасчёта истекла.",
+                show_alert=True,
+            )
+            return
+
+        start_date = session["start_date"]
+        end_date = session["end_date"]
+        finish_recalc_session(admin_id)
+
+        result = recalculate_earnings(
+            start_date,
+            end_date,
+        )
+
+        difference = result["difference"]
+        difference_text = (
+            f"+{difference} ₽"
+            if difference > 0
+            else f"{difference} ₽"
+        )
+
+        await query.edit_message_text(
+            "✅ ПЕРЕРАСЧЁТ ЗАВЕРШЁН
+
+"
+            f"📅 Период: {start_date.strftime('%d.%m.%Y')} — "
+            f"{end_date.strftime('%d.%m.%Y')}
+
+"
+            f"🔄 Изменено: {result['updated']}
+"
+            f"⏭ Без изменений: {result['unchanged']}
+"
+            f"⚠️ Пропущено: {result['skipped']}
+
+"
+            f"💰 Было: {result['old_total']} ₽
+"
+            f"💰 Стало: {result['new_total']} ₽
+"
+            f"📈 Разница: {difference_text}"
+        )
+
+        await query.message.reply_text(
+            "Админ-панель 👇",
+            reply_markup=ADMIN_PANEL_MENU,
+        )
+        return
+
+    # =====================================================
     # РАССЫЛКА
     # =====================================================
 
@@ -3653,6 +3837,20 @@ async def handle_message(
     save_user(update)
 
     # =====================================================
+    # АДМИНСКИЙ ПЕРЕРАСЧЁТ
+    # =====================================================
+
+    if user_id == ADMIN_ID:
+        if get_recalc_session(user_id):
+            handled = await handle_recalc_text(
+                update,
+                user_id,
+                text,
+            )
+            if handled:
+                return
+
+    # =====================================================
     # АДМИНСКАЯ РАССЫЛКА
     # =====================================================
 
@@ -4112,6 +4310,33 @@ async def handle_message(
             "📢 РАССЫЛКА\n\n"
             "Напиши текст, который нужно отправить всем пользователям.\n\n"
             "После ввода я покажу предпросмотр и попрошу подтвердить отправку.\n\n"
+            "Для отмены: ❌ Отмена",
+            reply_markup=ReplyKeyboardMarkup(
+                [["❌ Отмена"]],
+                resize_keyboard=True,
+            ),
+        )
+        return
+
+    if text == "🔄 Пересчитать заявки":
+        if user_id != ADMIN_ID:
+            await update.message.reply_text(
+                "⛔ Доступ запрещён.",
+                reply_markup=get_menu(user_id),
+            )
+            return
+
+        start_recalc_session(user_id)
+
+        await update.message.reply_text(
+            "🔄 ПЕРЕРАСЧЁТ ЗАЯВОК
+
+"
+            "Введи начальную дату в формате ДД.ММ.ГГГГ.
+"
+            "Например: 01.09.2026
+
+"
             "Для отмены: ❌ Отмена",
             reply_markup=ReplyKeyboardMarkup(
                 [["❌ Отмена"]],
