@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 
-from rates import RATES
+from database import get_tariff
 
 
 def parse_message(text: str):
@@ -21,8 +21,11 @@ def parse_message(text: str):
     operation_id = operation_match.group(1)
     trigger = operation_id[:2]
 
-    # Проверяем, есть ли такой код в тарифах
-    if trigger not in RATES:
+    # Тарифы хранятся в SQLite и могут изменяться
+    # администратором прямо из Telegram.
+    rate = get_tariff(trigger)
+
+    if rate is None:
         return None
 
     text_lower = text.lower()
@@ -74,8 +77,6 @@ def parse_message(text: str):
             )
         except ValueError:
             created_at = None
-
-    rate = RATES[trigger]
 
     advance = rate["advance"] if is_payable else 0
     settlement = rate["settlement"] if is_payable else 0
