@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import datetime
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import ContextTypes, MessageHandler, CallbackQueryHandler, filters
 
 from config import ADMIN_ID
@@ -96,6 +96,14 @@ def project_name_exists(name):
             (name,),
         ).fetchone()
         return row is not None
+
+
+def build_cancel_keyboard():
+    return ReplyKeyboardMarkup(
+        [["❌ Отмена"]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
 
 
 def build_user_projects_keyboard():
@@ -241,7 +249,8 @@ async def handle_knowledge_text(update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ Проект «{text}» создан в черновике.\n\n"
             "📎 Теперь отправь файл памятки.\n"
             "Поддерживаются PDF, DOCX, TXT и другие файлы, которые Telegram отправляет как документ.\n\n"
-            "Для отмены: ❌ Отмена"
+            "Для отмены нажми кнопку ниже 👇",
+            reply_markup=build_cancel_keyboard(),
         )
         return
 
@@ -335,7 +344,8 @@ async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
             "➕ ДОБАВЛЕНИЕ ПРОЕКТА\n\n"
             "Напиши название проекта.\n"
             "Например: Ozon\n\n"
-            "Для отмены: ❌ Отмена"
+            "Для отмены нажми кнопку ниже 👇",
+            reply_markup=build_cancel_keyboard(),
         )
         return
 
@@ -353,7 +363,9 @@ async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
             "✏️ ЗАМЕНА ПАМЯТКИ\n\n"
             f"Проект: {project['name']}\n"
             f"Текущий файл: {project['file_name']}\n\n"
-            "📎 Отправь новый файл памятки."
+            "📎 Отправь новый файл памятки.\n\n"
+            "Для отмены нажми кнопку ниже 👇",
+            reply_markup=build_cancel_keyboard(),
         )
         return
 
