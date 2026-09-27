@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -30,26 +31,87 @@ SYSTEM_PROMPT = """Ты — Efin AI, внутренний помощник ко�
 
 _PROJECT_CACHE = {}
 _FILE_CACHE = {}
+_GITHUB_TOKENS = None
 
 
-def _headers():
-    h = {"Accept": "application/vnd.github+json", "User-Agent": "Efin-Money-Bot"}
-    token = os.getenv("GITHUB_TOKEN")
+def _github_tokens():
+    """Возвращает доступные GitHub-токены без обязательной отдельной переменной.
+
+    Приоритет:
+    1. GITHUB_TOKEN — стандартный токен Codespaces.
+    2. GH_TOKEN — стандартная переменная GitHub CLI.
+    3. `gh auth token` — авторизация GitHub CLI, если она доступна.
+    4. EFIN_KB_TOKEN — старый необязательный fallback для обратной совместимости.
+    """
+    global _GITHUB_TOKENS
+    if _GITHUB_TOKENS is not None:
+        return _GITHUB_TOKENS
+
+    tokens = []
+    for value in (os.getenv("GITHUB_TOKEN"), os.getenv("GH_TOKEN"), os.getenv("EFIN_KB_TOKEN")):
+        if value and value not in tokens:
+            tokens.append(value)
+
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "token"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        cli_token = (result.stdout or "").strip()
+        if cli_token and cli_token not in tokens:
+            tokens.append(cli_token)
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        pass
+
+    _GITHUB_TOKENS = tokens
+    return _GITHUB_TOKENS
+
+
+def _headers(token=None):
+    h = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "Efin-Money-Bot",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
     if token:
         h["Authorization"] = f"Bearer {token}"
     return h
 
 
+def _request(url, timeout=45):
+    """Запрос к GitHub с автоматическим fallback между доступными auth-токенами."""
+    tokens = _github_tokens()
+
+    # Сначала пробуем авторизацию. Если токен Codespaces не имеет доступа
+    # к отдельному приватному KB-репозиторию, пробуем GH CLI / fallback token.
+    errors = []
+    candidates = tokens or [None]
+
+    for token in candidates:
+        try:
+            req = urllib.request.Request(url, headers=_headers(token))
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read()
+        except urllib.error.HTTPError as exc:
+            errors.append(exc)
+            if exc.code in (401, 403, 404):
+                continue
+            raise
+
+    if errors:
+        raise errors[-1]
+    raise RuntimeError("Не удалось выполнить запрос к GitHub")
+
+
 def _get_json(url, timeout=45):
-    req = urllib.request.Request(url, headers=_headers())
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
+    return json.loads(_request(url, timeout).decode("utf-8"))
 
 
 def _get_bytes(url, timeout=180):
-    req = urllib.request.Request(url, headers=_headers())
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+    return _request(url, timeout)
 
 
 def _decode(data):
@@ -87,8 +149,6 @@ def _repo_projects():
             if files:
                 projects[item["name"]] = files
 
-    # Пока МТС лежит в корне репозитория. Когда появятся папки проектов,
-    # каждая папка автоматически станет отдельным проектом.
     if root_files:
         projects.setdefault("МБ ( МТС БАНК )", []).extend(root_files)
 
@@ -299,7 +359,6 @@ async def ask_efin_ai(bot, user_text):
     context = _relevant(text, user_text)
     selected = _candidates(images, user_text, 6) if _visual(user_text) else []
 
-    # Если имя файла не помогло, проверяем небольшую выборку vision.
     if _visual(user_text) and not selected and images:
         probe = images[:6]
         try:
