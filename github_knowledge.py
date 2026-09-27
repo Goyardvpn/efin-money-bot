@@ -12,8 +12,8 @@ from pathlib import Path
 TOKENBOM_API_URL = "https://tokenbom.com/v1/chat/completions"
 TOKENBOM_MODEL = "gpt-5.6-luna"
 GITHUB_API = "https://api.github.com"
-GITHUB_REPO = os.getenv("EFIN_KB_REPO", "Goyardvpn/efin-knowledge-base")
-GITHUB_BRANCH = os.getenv("EFIN_KB_BRANCH", "main")
+GITHUB_REPO = os.getenv("EFIN_KB_REPO") or "Goyardvpn/efin-knowledge-base"
+GITHUB_BRANCH = os.getenv("EFIN_KB_BRANCH") or "main"
 CACHE_DIR = Path("data/github_knowledge")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
