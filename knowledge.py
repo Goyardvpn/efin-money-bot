@@ -16,34 +16,6 @@ KB_NAVIGATION_TEXTS = {
 }
 
 
-def _column_info(conn, table):
-    return conn.execute(f"PRAGMA table_info({table})").fetchall()
-
-
-def _migrate_projects_table(conn):
-    columns = _column_info(conn, "knowledge_projects")
-    if not columns:
-        return
-    file_id_col = next((c for c in columns if c["name"] == "file_id"), None)
-    if file_id_col is None or int(file_id_col["notnull"]) == 0:
-        return
-
-    conn.execute("ALTER TABLE knowledge_projects RENAME TO knowledge_projects_old")
-    conn.execute("""CREATE TABLE knowledge_projects (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        file_id TEXT,
-        file_name TEXT,
-        mime_type TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )""")
-    conn.execute("""INSERT INTO knowledge_projects
-        (id,name,file_id,file_name,mime_type,created_at,updated_at)
-        SELECT id,name,file_id,file_name,mime_type,created_at,updated_at
-        FROM knowledge_projects_old""")
-    conn.execute("DROP TABLE knowledge_projects_old")
-
 
 def init_knowledge_db():
     with get_connection() as conn:
@@ -74,14 +46,6 @@ def init_knowledge_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(project_id) REFERENCES knowledge_projects(id) ON DELETE CASCADE
         )""")
-        old = conn.execute(
-            "SELECT id,file_id,file_name,mime_type FROM knowledge_projects WHERE file_id IS NOT NULL"
-        ).fetchall()
-        for row in old:
-            conn.execute(
-                "INSERT OR IGNORE INTO knowledge_files(project_id,file_id,file_name,mime_type) VALUES(?,?,?,?)",
-                (row["id"], row["file_id"], row["file_name"] or "Памятка", row["mime_type"] or ""),
-            )
         conn.commit()
 
 
