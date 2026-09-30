@@ -2,7 +2,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMa
 from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters
 
 from config import ADMIN_ID
-from database import get_connection
+from knowledge_db import get_connection
 
 MAX_FILES_PER_PROJECT = 50
 KB_SESSIONS = {}
@@ -385,71 +385,81 @@ async def handle_knowledge_text(update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Название проекта не может быть пустым.")
             return
         if project_name_exists(text):
-            await update.message.reply_text("⚠️ Такой проект уже существует. Открой его в базе знаний и добавь материалы туда.")
+            await update.message.reply_text("❌ Такой проект уже существует. Введи другое название.")
             return
         project_id = add_project(text)
-        session["project_id"] = project_id
-        session["mode"] = "add_materials"
+        start_add_file_session(user_id, project_id)
         await update.message.reply_text(
             f"✅ Проект «{text}» создан.\n\n"
-            "📎 Теперь просто отправляй сюда файлы, фото ИЛИ обычный текст из группы стажёров.\n\n"
-            "Когда закончишь — нажми «✅ Готово».",
+            "Теперь присылай файлы/фото или текстовые материалы.\n"
+            f"Можно добавить до {MAX_FILES_PER_PROJECT} файлов/фото.\n\n"
+            "Когда закончишь — нажми «✅ Готово». ",
             reply_markup=build_files_keyboard(),
         )
         return
 
     if session.get("mode") == "add_materials":
         project_id = session.get("project_id")
-        if not project_id or not text:
+        if not project_id:
+            finish_session(user_id)
             return
-        try:
+        if text:
             add_project_text(project_id, text)
-        except ValueError as exc:
-            await update.message.reply_text(f"⚠️ {exc}")
-            return
-        project = get_project(project_id)
-        count = get_project_text_count(project_id)
-        await update.message.reply_text(
-            f"✅ Текст добавлен в базу\n\n📁 {project['name']}\n"
-            f"📝 Текстовых материалов: {count}\n\n"
-            "Можно отправить следующий текст, файл или фото.",
-            reply_markup=build_files_keyboard(),
-        )
+            await update.message.reply_text("📝 Текст добавлен.")
 
 
 async def handle_knowledge_document(update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_user or update.effective_user.id != ADMIN_ID:
+    if not update.message or not update.effective_user or not update.message.document:
         return
-    session = get_session(ADMIN_ID)
-    if not session or not session.get("project_id"):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+    session = get_session(user_id)
+    if not session or session.get("mode") != "add_materials":
+        return
+    project_id = session.get("project_id")
+    if not project_id:
+        finish_session(user_id)
         return
     document = update.message.document
-    file_name = document.file_name or "Памятка"
-    mime_type = document.mime_type or ""
-    try:
-        add_project_file(session["project_id"], document.file_id, file_name, mime_type)
-    except ValueError as exc:
-        await update.message.reply_text(f"⚠️ {exc}")
+    if get_project_file_count(project_id) >= MAX_FILES_PER_PROJECT:
+        await update.message.reply_text(f"❌ Достигнут лимит {MAX_FILES_PER_PROJECT} файлов/фото.")
         return
-    project = get_project(session["project_id"])
-    count = get_project_file_count(session["project_id"])
-    await update.message.reply_text(
-        f"✅ Файл добавлен: {file_name}\n\n📁 {project['name']}\n"
-        f"📎 Файлов/фото: {count}/{MAX_FILES_PER_PROJECT}\n\n"
-        "Можно отправить следующий файл, фото или обычный текст.\n\n"
-        "Нажми «✅ Готово», когда закончишь.",
-        reply_markup=build_files_keyboard(),
-    )
+    add_project_file(project_id, document.file_id, document.file_name or "Файл", document.mime_type or "")
+    await update.message.reply_text(f"📎 Файл добавлен: {document.file_name or 'Файл'}")
+
+
+async def handle_knowledge_photo(update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.effective_user or not update.message.photo:
+        return
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+    session = get_session(user_id)
+    if not session or session.get("mode") != "add_materials":
+        return
+    project_id = session.get("project_id")
+    if not project_id:
+        finish_session(user_id)
+        return
+    if get_project_file_count(project_id) >= MAX_FILES_PER_PROJECT:
+        await update.message.reply_text(f"❌ Достигнут лимит {MAX_FILES_PER_PROJECT} файлов/фото.")
+        return
+    photo = update.message.photo[-1]
+    add_project_file(project_id, photo.file_id, "Фото.jpg", "image/jpeg")
+    await update.message.reply_text("🖼 Фото добавлено.")
 
 
 async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if not query:
+        return
     await query.answer()
-    user_id = query.from_user.id
     data = query.data or ""
+    user_id = query.from_user.id
 
     if data == "kb_back":
-        await query.edit_message_text("Раздел закрыт.")
+        await show_user_knowledge(query, edit=True)
         return
 
     if data.startswith("kb_project:"):
@@ -463,28 +473,26 @@ async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
             return
         files = get_project_files(project_id)
         texts = get_project_texts(project_id)
-        for f in files:
-            if f["mime_type"] and f["mime_type"].startswith("image/"):
-                await context.bot.send_photo(chat_id=user_id, photo=f["file_id"], caption=f"📚 {project['name']}\n🖼️ {f['file_name']}")
-            else:
-                await context.bot.send_document(chat_id=user_id, document=f["file_id"], caption=f"📚 {project['name']}\n📎 {f['file_name']}")
-        if texts:
-            combined = "\n\n".join(t["text"] for t in texts)
-            for start in range(0, len(combined), 3800):
-                await context.bot.send_message(chat_id=user_id, text=f"📚 {project['name']} — текстовая часть\n\n{combined[start:start + 3800]}")
-        if not files and not texts:
-            await query.answer("В проекте пока нет материалов.", show_alert=True)
+        await query.edit_message_text(
+            f"📁 {project['name']}\n\n"
+            f"Файлов/фото: {len(files)}\n"
+            f"Текстов: {len(texts)}\n\n"
+            "Материалы проекта используются Efin AI при ответах."
+        )
         return
 
     if user_id != ADMIN_ID:
-        await query.answer("⛔ Доступ запрещён.", show_alert=True)
+        return
+
+    if data == "admin_kb_list":
+        finish_session(user_id)
+        await show_admin_knowledge(query)
         return
 
     if data == "admin_kb_add":
-        start_add_session(ADMIN_ID)
-        await query.message.reply_text(
-            "➕ ДОБАВЛЕНИЕ ПРОЕКТА\n\nНапиши название проекта.\nНапример: МТС Банк\n\nПосле этого можно будет загружать файлы, фото и обычный текст.",
-            reply_markup=build_cancel_keyboard(),
+        start_add_session(user_id)
+        await query.edit_message_text(
+            "➕ Введи название нового проекта:",
         )
         return
 
@@ -493,6 +501,7 @@ async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
             project_id = int(data.split(":", 1)[1])
         except ValueError:
             return
+        finish_session(user_id)
         await show_project_manage(query, project_id)
         return
 
@@ -501,33 +510,28 @@ async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
             project_id = int(data.split(":", 1)[1])
         except ValueError:
             return
-        if not get_project(project_id):
+        start_add_file_session(user_id, project_id)
+        project = get_project(project_id)
+        if not project:
+            finish_session(user_id)
             await query.answer("Проект не найден.", show_alert=True)
             return
-        start_add_file_session(ADMIN_ID, project_id)
-        project = get_project(project_id)
-        await query.message.reply_text(
-            f"📎 ДОБАВЛЕНИЕ МАТЕРИАЛОВ\n\nПроект: {project['name']}\n"
-            f"Файлов/фото: {get_project_file_count(project_id)}/{MAX_FILES_PER_PROJECT}\n"
-            f"Текстов: {get_project_text_count(project_id)}\n\n"
-            "Отправляй сюда файлы, фото или обычный текст. Когда закончишь — нажми «✅ Готово».",
-            reply_markup=build_files_keyboard(),
+        await query.edit_message_text(
+            f"📎 Добавление материалов в «{project['name']}».\n\n"
+            "Присылай PDF, DOCX, PPTX, TXT, изображения или обычный текст.\n"
+            f"Лимит файлов/фото: {MAX_FILES_PER_PROJECT}.\n\n"
+            "После загрузки нажми «✅ Готово»."
         )
         return
 
     if data.startswith("admin_kb_file_delete:"):
         try:
-            file_row_id = int(data.split(":", 1)[1])
+            row_id = int(data.split(":", 1)[1])
         except ValueError:
             return
-        with get_connection() as conn:
-            row = conn.execute("SELECT project_id FROM knowledge_files WHERE id=?", (file_row_id,)).fetchone()
-        if not row:
-            await query.answer("Файл уже удалён.", show_alert=True)
-            return
-        project_id = row["project_id"]
-        delete_project_file(file_row_id)
-        await show_project_manage(query, project_id)
+        delete_project_file(row_id)
+        await query.edit_message_reply_markup(reply_markup=build_project_manage_keyboard(get_project_files(row_id)[0]['project_id']) if False else None)
+        await show_admin_knowledge(query)
         return
 
     if data.startswith("admin_kb_text_delete:"):
@@ -535,14 +539,8 @@ async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
             text_id = int(data.split(":", 1)[1])
         except ValueError:
             return
-        with get_connection() as conn:
-            row = conn.execute("SELECT project_id FROM knowledge_texts WHERE id=?", (text_id,)).fetchone()
-        if not row:
-            await query.answer("Текст уже удалён.", show_alert=True)
-            return
-        project_id = row["project_id"]
         delete_project_text(text_id)
-        await show_project_manage(query, project_id)
+        await show_admin_knowledge(query)
         return
 
     if data.startswith("admin_kb_delete:"):
@@ -550,48 +548,36 @@ async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
             project_id = int(data.split(":", 1)[1])
         except ValueError:
             return
-        project = get_project(project_id)
-        if not project:
-            await query.answer("Проект уже удалён.", show_alert=True)
-            return
-        await query.edit_message_text(
-            f"🗑 УДАЛЕНИЕ ПРОЕКТА\n\n📁 {project['name']}\n\nУдалить проект вместе со всеми материалами?",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Удалить", callback_data=f"admin_kb_confirm_delete:{project_id}")],
-                [InlineKeyboardButton("❌ Отмена", callback_data="admin_kb_list")],
-            ]),
-        )
-        return
-
-    if data == "admin_kb_list":
+        delete_project(project_id)
+        finish_session(user_id)
         await show_admin_knowledge(query)
         return
 
-    if data.startswith("admin_kb_confirm_delete:"):
-        try:
-            project_id = int(data.split(":", 1)[1])
-        except ValueError:
-            return
-        delete_project(project_id)
-        await query.edit_message_text("✅ Проект удалён.", reply_markup=build_admin_projects_keyboard())
 
+# Регистрация обработчиков
 
-def install(bot_module):
-    init_knowledge_db()
-    bot_module.USER_MENU = ReplyKeyboardMarkup(
-        [["💰 Заработок", "📅 Сегодня"], ["📆 Неделя", "🗓 Месяц"],
-         ["📥 Загрузить заявки", "📥 Последние заявки"], ["📚 База знаний"], ["⚙️ Настройки"]],
-        resize_keyboard=True,
+def register_knowledge_handlers(application):
+    application.add_handler(
+        CallbackQueryHandler(
+            handle_knowledge_callback,
+            pattern=r"^(kb_|admin_kb_)"
+        )
     )
-    bot_module.ADMIN_MENU = ReplyKeyboardMarkup(
-        [["💰 Заработок", "📅 Сегодня"], ["📆 Неделя", "🗓 Месяц"],
-         ["📥 Загрузить заявки", "📥 Последние заявки"], ["📚 База знаний"],
-         ["⚙️ Настройки"], ["🛠 Админ-панель"]],
-        resize_keyboard=True,
+    application.add_handler(
+        MessageHandler(
+            filters.Document.ALL & KnowledgeDocumentFilter(),
+            handle_knowledge_document,
+        )
     )
-    bot_module.ADMIN_PANEL_MENU = ReplyKeyboardMarkup(
-        [["👥 Пользователи"], ["📊 Общая статистика"], ["📋 Все заявки"],
-         ["⚙️ Тарифы"], ["🔄 Пересчитать заявки"], ["🔧 Технический режим"],
-         ["📚 База знаний"], ["💸 Корректировка"], ["📢 Рассылка"], ["⬅️ Назад"]],
-        resize_keyboard=True,
+    application.add_handler(
+        MessageHandler(
+            filters.PHOTO,
+            handle_knowledge_photo,
+        )
+    )
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & KnowledgeTextFilter(),
+            handle_knowledge_text,
+        )
     )
