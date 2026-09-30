@@ -28,7 +28,6 @@ def init_knowledge_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
-        _migrate_projects_table(conn)
         conn.execute("""CREATE TABLE IF NOT EXISTS knowledge_files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id INTEGER NOT NULL,
