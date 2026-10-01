@@ -1,0 +1,1 @@
+Amvera persistent databases live in /data. Upload efin.db and knowledge.db to the application's Data storage.
