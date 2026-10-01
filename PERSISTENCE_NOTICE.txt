@@ -1,0 +1,2 @@
+SQLite databases are stored in Amvera persistent storage at /data.
+The repository data/ directory is only for source/deployment files.
