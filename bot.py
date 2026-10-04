@@ -1571,35 +1571,35 @@ async def start(
             "Добро пожаловать в командку EFIN 👋\n\n"
             "Здесь ты можешь удобно отслеживать "
             "свои заявки и заработок.\n\n"
-            
+
             "📥 КАК ПОЛЬЗОВАТЬСЯ БОТОМ\n\n"
-            
+
             "• Отправляй заявку от EfinAgentBot — "
             "бот предложит выбрать дату и добавит "
             "её в твой доход.\n\n"
-            
+
             "• Если нужно загрузить несколько заявок "
             "сразу — нажми «📥 Загрузить заявки», "
             "выбери дату и отправляй заявки одну за другой.\n\n"
-            
+
             "• В разделе «💰 Заработок» можно посмотреть "
             "ближайшие выплаты, общий доход и количество заявок.\n\n"
-            
+
             "• Через «🔎 Детализация дохода» можно посмотреть, "
             "какие конкретно заявки попали в аванс и сверку.\n\n"
-            
+
             "• Если случайно отправишь одну и ту же заявку "
             "повторно — бот сообщит, что это дубль.\n\n"
-            
+
             "• Все основные действия доступны через кнопки меню.\n\n"
-            
+
             "━━━━━━━━━━━━━━\n\n"
-            
+
             "⚠️ БОТ находится в разработке, "
             "выплаты в сверку, могут отличаться!\n\n"
-            
+
             "Жалобы, угрозы, предложения — @mityazazin",
-            
+
             reply_markup=get_menu(user_id),
         )
 
@@ -2232,77 +2232,6 @@ def build_date_delete_confirmation_keyboard():
             ],
         ]
     )
-
-
-async def prepare_admin_date_delete(
-    query_or_message,
-    admin_id: int,
-    target_user_id: int,
-    selected_date: date,
-):
-    stats = delete_user_earnings_preview(
-        target_user_id,
-        selected_date,
-    )
-
-    set_admin_pending_date_delete(
-        admin_id,
-        target_user_id,
-        selected_date,
-    )
-
-    message = (
-        "📅 УДАЛЕНИЕ ЗАЯВОК\n\n"
-        f"👤 Пользователь ID: "
-        f"{target_user_id}\n"
-        f"📅 Дата: "
-        f"{format_date(selected_date)}\n\n"
-        f"📦 Найдено заявок: "
-        f"{stats['count']}\n"
-        f"💰 Сумма: "
-        f"{stats['total']} ₽\n\n"
-    )
-
-    if stats["count"] == 0:
-        message += (
-            "⚠️ За эту дату заявок нет.\n\n"
-            "Удалять нечего."
-        )
-
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "⬅️ Назад",
-                        callback_data=(
-                            f"admin_user:{target_user_id}"
-                        ),
-                    )
-                ]
-            ]
-        )
-
-    else:
-        message += (
-            "⚠️ После удаления эти заявки "
-            "будут полностью удалены из базы.\n\n"
-            "Продолжить?"
-        )
-
-        keyboard = (
-            build_date_delete_confirmation_keyboard()
-        )
-
-    if hasattr(query_or_message, "edit_message_text"):
-        await query_or_message.edit_message_text(
-            message,
-            reply_markup=keyboard,
-        )
-    else:
-        await query_or_message.reply_text(
-            message,
-            reply_markup=keyboard,
-        )
 
 
 def delete_user_earnings_preview(

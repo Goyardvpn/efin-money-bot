@@ -1,5 +1,5 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
-from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import ContextTypes, filters
 
 from config import ADMIN_ID
 from knowledge_db import get_connection
@@ -14,7 +14,6 @@ KB_NAVIGATION_TEXTS = {
     "⬅️ Выйти",
     "📚 База знаний",
 }
-
 
 
 def init_knowledge_db():
@@ -184,10 +183,6 @@ def delete_project(project_id):
         conn.execute("DELETE FROM knowledge_files WHERE project_id=?", (project_id,))
         conn.execute("DELETE FROM knowledge_projects WHERE id=?", (project_id,))
         conn.commit()
-
-
-def build_cancel_keyboard():
-    return ReplyKeyboardMarkup([["❌ Отмена"]], resize_keyboard=True, one_time_keyboard=True)
 
 
 def build_files_keyboard():
@@ -519,28 +514,3 @@ async def handle_knowledge_callback(update, context: ContextTypes.DEFAULT_TYPE):
 
 # Регистрация обработчиков
 
-def register_knowledge_handlers(application):
-    application.add_handler(
-        CallbackQueryHandler(
-            handle_knowledge_callback,
-            pattern=r"^(kb_|admin_kb_)"
-        )
-    )
-    application.add_handler(
-        MessageHandler(
-            filters.Document.ALL & KnowledgeDocumentFilter(),
-            handle_knowledge_document,
-        )
-    )
-    application.add_handler(
-        MessageHandler(
-            filters.PHOTO,
-            handle_knowledge_photo,
-        )
-    )
-    application.add_handler(
-        MessageHandler(
-            filters.TEXT & KnowledgeTextFilter(),
-            handle_knowledge_text,
-        )
-    )

@@ -2,4 +2,3 @@
 __pycache__/
 *.pyc
 data/
-max_length

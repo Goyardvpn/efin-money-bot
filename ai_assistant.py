@@ -35,10 +35,6 @@ SYSTEM_PROMPT = """Ты — Efin AI, внутренний помощник ко�
 _CACHE = {}
 
 
-def invalidate_knowledge_cache():
-    _CACHE.clear()
-
-
 def _decode(data):
     for encoding in ("utf-8", "cp1251"):
         try:

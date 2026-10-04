@@ -94,4 +94,3 @@ def parse_message(text: str):
         "created_at": created_at,
         "original_text": text,
     }
-    

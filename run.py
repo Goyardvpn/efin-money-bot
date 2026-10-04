@@ -1,3 +1,9 @@
+"""Точка входа бота (Amvera запускает именно этот файл, см. amvera.yaml).
+
+Порядок подключения модулей важен: каждый install() оборачивает
+обработчики из bot.py, поэтому менять последовательность не нужно.
+"""
+
 import bot
 import knowledge
 import knowledge_texts_ai
@@ -7,16 +13,23 @@ import ui_router
 import github_knowledge
 
 
-# Инициализация старой Telegram-БД и интерфейса.
-# Efin AI теперь получает знания напрямую из GitHub-репозитория
-# Goyardvpn/efin-knowledge-base, а не из Telegram-БД.
-knowledge.init_knowledge_db()
-knowledge_bootstrap.install(bot)
-knowledge_texts_ai.install()
+def main():
+    # База знаний (SQLite) и её интерфейс.
+    knowledge.init_knowledge_db()
+    knowledge_bootstrap.install(bot)
+    knowledge_texts_ai.install()
 
-# Подменяем источник AI до установки обработчика.
-ai_feature.ask_efin_ai = github_knowledge.ask_efin_ai
-ai_feature.install(bot)
-ui_router.install(bot)
+    # Efin AI получает знания напрямую из GitHub-репозитория
+    # Goyardvpn/efin-knowledge-base, а не из Telegram-БД.
+    # Подмена источника должна произойти до ai_feature.install().
+    ai_feature.ask_efin_ai = github_knowledge.ask_efin_ai
+    ai_feature.install(bot)
 
-bot.main()
+    # Навигация и меню.
+    ui_router.install(bot)
+
+    bot.main()
+
+
+if __name__ == "__main__":
+    main()
