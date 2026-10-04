@@ -11,6 +11,7 @@ import knowledge_bootstrap
 import ai_feature
 import ui_router
 import github_knowledge
+import daily_digest
 
 
 def main():
@@ -27,6 +28,9 @@ def main():
 
     # Навигация и меню.
     ui_router.install(bot)
+
+    # Утренняя рассылка 07:00 МСК (погода в Москве + цитата), команда /digest для админа.
+    daily_digest.install()
 
     bot.main()
 

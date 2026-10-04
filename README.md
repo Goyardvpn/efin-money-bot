@@ -16,6 +16,7 @@ GitHub-репозитория.
 | `ai_feature.py`, `ai_assistant.py` | кнопка «🤖 Efin AI», запросы к TokenBoom API |
 | `github_knowledge.py` | загрузка базы знаний из GitHub |
 | `knowledge*.py` | управление базой знаний из Telegram |
+| `daily_digest.py` | рассылка в 07:00 МСК: погода в Москве и цитата; `/digest` — отправить админу сейчас |
 
 ## Запуск локально
 
