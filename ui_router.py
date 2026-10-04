@@ -210,11 +210,18 @@ async def _handle_navigation(update, context, original_handler, bot_module):
     text = update.message.text.strip()
     mode = MODES.get(user_id, START_MODE)
 
-    # The two top-level buttons are available only from the start screen.
-    if text == CABINET and mode == START_MODE:
-        await show_cabinet(update, bot_module)
+    # «Личный кабинет» — кнопка верхнего уровня. Режим хранится в памяти и
+    # может разойтись с клавиатурой (например, после «⬅️ Назад» из админ-панели
+    # в bot.py режим остаётся ADMIN_MODE, а на экране уже стартовое меню).
+    # Поэтому кнопка работает из любого режима и заодно сбрасывает старые сессии.
+    if text == CABINET:
+        if mode == START_MODE:
+            await show_cabinet(update, bot_module)
+        else:
+            await _go_cabinet(update, bot_module)
         return
 
+    # Админ-панель доступна только со стартового экрана.
     if text == ADMIN_PANEL and user_id == bot_module.ADMIN_ID and mode == START_MODE:
         MODES[user_id] = ADMIN_MODE
         await original_handler(update, context)
