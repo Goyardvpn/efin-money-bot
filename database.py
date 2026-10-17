@@ -6,6 +6,16 @@ from zoneinfo import ZoneInfo
 DB_PATH = Path("data/efin.db")
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 
+# Статусы заявок, за которые начисляется оплата.
+# Список используют и разбор сообщений (parser.py), и перерасчёт по тарифам.
+PAYABLE_STATUSES = frozenset({
+    "заявка принята",
+    "успешно подписана",
+    "успешно выдана",
+    "выполнена, банк отказал",
+    "отрицательное решение банка",
+})
+
 
 # =========================================================
 # ВРЕМЯ
@@ -819,11 +829,7 @@ def get_global_stats():
 # =========================================================
 
 def recalculate_earnings(start_date=None, end_date=None):
-    payable_statuses = {
-        "заявка принята",
-        "успешно подписана",
-        "успешно выдана",
-    }
+    payable_statuses = PAYABLE_STATUSES
 
     with get_connection() as conn:
         query = """

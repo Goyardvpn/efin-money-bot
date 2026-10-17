@@ -1,7 +1,37 @@
 import re
 from datetime import datetime
 
-from database import get_tariff
+from database import PAYABLE_STATUSES, get_tariff
+
+# Банк может отказать клиенту, но заявка при этом всё равно оплачивается.
+# Такие сообщения содержат явную фразу про оплату: «оплата такая же 300+100»,
+# «оплата 300+100». Только вместе с ней отказ считается оплачиваемым,
+# обычный отказ без этой фразы по-прежнему не оплачивается.
+_PAYMENT_CLAUSE = re.compile(
+    r"(?<![а-я])(?<!без\s)оплата\s+(?:такая\s+же|как\s+обычно|\d)"
+)
+
+
+def detect_paid_refusal(text: str):
+    """Возвращает статус оплачиваемого отказа или None."""
+    normalized = " ".join(text.lower().replace("ё", "е").split())
+
+    if not _PAYMENT_CLAUSE.search(normalized):
+        return None
+
+    if (
+        "карта остается у клиента" in normalized
+        or "банком клиенту отказано" in normalized
+    ):
+        return "выполнена, банк отказал"
+
+    if (
+        "отрицательное решение банка" in normalized
+        or "карту не выдавать" in normalized
+    ):
+        return "отрицательное решение банка"
+
+    return None
 
 
 def parse_message(text: str):
@@ -31,7 +61,12 @@ def parse_message(text: str):
     text_lower = text.lower()
 
     # Определяем статус
-    if "ожидает подписания" in text_lower:
+    paid_refusal_status = detect_paid_refusal(text)
+
+    if paid_refusal_status:
+        status = paid_refusal_status
+
+    elif "ожидает подписания" in text_lower:
         status = "ожидает подписания"
 
     elif "успешно подписана через маркетплейс" in text_lower:
@@ -46,14 +81,9 @@ def parse_message(text: str):
     else:
         status = "неизвестный статус"
 
-    # Эти статусы оплачиваются
-    payable_statuses = {
-        "заявка принята",
-        "успешно подписана",
-        "успешно выдана",
-    }
-
-    is_payable = status in payable_statuses
+    # Оплачиваемые статусы хранятся в database.PAYABLE_STATUSES,
+    # чтобы перерасчёт по тарифам считал их так же, как этот разбор.
+    is_payable = status in PAYABLE_STATUSES
 
     # Ищем дату заявки:
     # от 25.09.2026 14:32:10
